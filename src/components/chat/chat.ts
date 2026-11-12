@@ -906,13 +906,13 @@ export default class Chat extends EventListenerBase<{
       // and would close the *real* chat behind the popup if the previewed dialog got dropped.
       this.bubbles.listenerSetter.add(rootScope)('dialog_drop', (dialog) => {
         if(dialog.peerId === this.peerId && (isDialog(dialog) || this.threadId === getDialogKey(dialog))) {
-          this.appImManager.setPeer({isDeleting: true});
+          this.appImManager.closeDeletedChat(this);
         }
       });
 
       this.bubbles.listenerSetter.add(rootScope)('monoforum_dialogs_drop', ({ids, parentPeerId}) => {
         if(parentPeerId === this.peerId && ids.includes(this.monoforumThreadId)) {
-          this.appImManager.setPeer({isDeleting: true});
+          this.appImManager.closeDeletedChat(this);
         }
       });
     }
@@ -982,12 +982,12 @@ export default class Chat extends EventListenerBase<{
     };
 
     this.bubbles.listenerSetter.add(this.appImManager)('chat_changing', ({to}) => {
-      freezeObservers(to !== this);
+      freezeObservers(to !== this && !this.appImManager.isWindowedChat(this));
     });
 
     this.bubbles.listenerSetter.add(this.appImManager)('tab_changing', (tabId) => {
       const offScreenOnMobile = tabId !== APP_TABS.CHAT && mediaSizes.activeScreen === ScreenSize.mobile;
-      freezeObservers(this.appImManager.chat !== this || offScreenOnMobile);
+      freezeObservers((this.appImManager.chat !== this && !this.appImManager.isWindowedChat(this)) || offScreenOnMobile);
       this.setBackgroundHidden(offScreenOnMobile);
     });
 

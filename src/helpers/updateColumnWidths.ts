@@ -65,6 +65,7 @@ import rootScope from '@lib/rootScope';
 import clamp from '@helpers/number/clamp';
 import throttle from '@helpers/schedulers/throttle';
 import {getAppWindow} from '@helpers/appWindow';
+import {isDesktopWmEnabled} from '@config/desktopWm';
 
 // Default and resize range for the left & right columns.
 export const DEFAULT_COLUMN_WIDTH = 360;
@@ -135,6 +136,11 @@ let foldersSidebarShown = false;
     const n = parseInt(rawRight);
     if(!isNaN(n)) userPreferredRightWidth = clamp(n, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
   }
+
+  // The window-manager layout keeps the left column a strip of icons for good.
+  if(isDesktopWmEnabled()) {
+    userPreferredLeftCollapsed = true;
+  }
 })();
 
 const persistLeftPreference = throttle(() => {
@@ -154,6 +160,8 @@ const persistRightPreference = throttle(() => {
  * before storing.
  */
 export function setUserPreferredLeft(width: number): void {
+  if(isDesktopWmEnabled()) return;
+
   if(width <= 0) {
     userPreferredLeftCollapsed = true;
     userPreferredLeftWidth = undefined;
@@ -293,7 +301,8 @@ export default function updateColumnWidths(): void {
   // `.bubbles-inner { width: calc(100% - var(--right-column-width) ...) }`
   // rule in _chat.scss subtracts the right column from the chat width,
   // collapsing the messages column to 0 / a tiny centered strip.
-  const floats = isMobile || availableWidth < rightColumnFits;
+  // * the windows lie over the whole desktop, so the right column always floats over them
+  const floats = isMobile || isDesktopWmEnabled() || availableWidth < rightColumnFits;
   const middleWidth = isMobile ? vw : availableWidth - PAGE_CHATS_PADDING * 2;
   // Chat content max width — fills the viewport on handheld (single-column
   // slider) and caps at CHAT_WIDTH_MAX otherwise. It also never exceeds the

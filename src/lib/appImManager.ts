@@ -24,6 +24,7 @@ import {doubleRaf} from '@helpers/schedulers';
 import useHeavyAnimationCheck, {dispatchHeavyAnimationEvent} from '@hooks/useHeavyAnimationCheck';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import Modes from '@config/modes';
+import ChatWindows from '@components/desktopWm/chatWindows';
 import appNavigationController, {USE_NAVIGATION_API} from '@components/appNavigationController';
 import {AppPrivateSearchTab} from '@components/solidJsTabs/tabs';
 import I18n, {i18n, join, LangPackKey} from '@lib/langPack';
@@ -314,6 +315,7 @@ export class AppImManager extends EventListenerBase<{
 }> {
   public columnEl = document.getElementById('column-center') as HTMLDivElement;
   public chatsContainer: HTMLElement;
+  public chatWindows: ChatWindows;
   public appChatBackground: AppChatBackground;
 
   public offline = false;
@@ -418,6 +420,7 @@ export class AppImManager extends EventListenerBase<{
     this.appendEmojiAnimationContainer(mediaSizes.activeScreen);
 
     this.columnEl.append(this.chatsContainer);
+    this.chatWindows = new ChatWindows(this);
 
     this.renderChatTips();
 
@@ -3663,6 +3666,7 @@ export class AppImManager extends EventListenerBase<{
       chat.beforeDestroy();
       chat.destroy();
     });
+    this.chatWindows?.reset();
 
     // * paid reactions still in their undo delay are dropped, as a reload drops them
     PENDING_PAID_REACTIONS.forEach((pending) => pending.abortController.abort());
@@ -3703,7 +3707,7 @@ export class AppImManager extends EventListenerBase<{
     }
   }
 
-  private createNewChat(accountNumber = getCurrentAccount()) {
+  private createNewChat(accountNumber = getCurrentAccount(), mount = true) {
     // * a chat is closed with its account, so whatever it sends late goes to that account; what comes
     // * back once it is destroyed has nothing left to land on
     let isChatGone = false;
@@ -3714,11 +3718,70 @@ export class AppImManager extends EventListenerBase<{
     );
     chat.destroyMiddlewareHelper.onDestroy(() => isChatGone = true);
 
-    this.chatsContainer.append(chat.container);
+    // * a chat in a window is mounted by the window
+    mount && this.chatsContainer.append(chat.container);
 
     this.chats.push(chat);
 
     return chat;
+  }
+
+  /** A chat of its own for a window, on top of the stack: the first chat stays under the windows as the empty one. */
+  public createWindowChat() {
+    const from = this.chat;
+    const chat = this.createNewChat(getCurrentAccount(), false);
+    this.dispatchEvent('chat_changing', {from, to: chat});
+    return chat;
+  }
+
+  public isWindowedChat(chat: Chat) {
+    return !!this.chatWindows?.has(chat);
+  }
+
+  /** A window has come into focus: its chat is the open one for the rest of the app from now on. */
+  public focusWindowChat(chat: Chat) {
+    const index = this.chats.indexOf(chat);
+    if(index <= 0 || index === this.chats.length - 1) {
+      return;
+    }
+
+    const from = this.chat;
+    this.chats.splice(index, 1);
+    this.chats.push(chat);
+    this.dispatchEvent('chat_changing', {from, to: chat});
+    this.dispatchEvent('peer_changed', chat);
+  }
+
+  /** A window has closed: its chat goes with it, and the one that was in focus before it is the open one again. */
+  public destroyWindowChat(chat: Chat) {
+    const index = this.chats.indexOf(chat);
+    if(index <= 0) {
+      return;
+    }
+
+    const wasOpen = chat === this.chat;
+    // * the draft is saved while the chat is still the open one
+    if(chat.peerId) {
+      this.dispatchEvent('peer_changing', chat);
+    }
+
+    this.chats.splice(index, 1);
+    chat.beforeDestroy();
+    chat.destroy();
+
+    if(wasOpen) {
+      this.dispatchEvent('chat_changing', {from: chat, to: this.chat});
+      this.dispatchEvent('peer_changed', this.chat);
+    }
+  }
+
+  /** The chat is gone (its dialog was dropped): its window closes, or the open chat does where there are no windows. */
+  public closeDeletedChat(chat: Chat) {
+    if(this.isWindowedChat(chat)) {
+      this.chatWindows.closeByChat(chat);
+    } else {
+      this.setPeer({isDeleting: true});
+    }
   }
 
   private spliceChats(fromIndex: number, justReturn = true, animate?: boolean, spliced?: Chat[]) {
@@ -3799,6 +3862,18 @@ export class AppImManager extends EventListenerBase<{
     options.peerId = await this.getPeerMigratedTo(options.peerId, managers) || options.peerId;
 
     const {peerId} = options;
+
+    // * every chat opens in a window of its own, and closing the open one closes its window
+    if(this.chatWindows?.isActive()) {
+      if(peerId) {
+        return this.chatWindows.open(options as ChatSetInnerPeerOptions);
+      }
+
+      if(this.chatWindows.hasWindows()) {
+        this.chatWindows.closeFocused();
+        return false;
+      }
+    }
 
     // * replenish `min` peer
     if(peerId && options.stack) {
@@ -3912,6 +3987,10 @@ export class AppImManager extends EventListenerBase<{
       }
 
       options.type ??= ChatType.Chat;
+    }
+
+    if(this.chatWindows?.isActive()) {
+      return this.chatWindows.open(options);
     }
 
     // * reuse current chat

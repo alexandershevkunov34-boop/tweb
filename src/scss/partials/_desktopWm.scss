@@ -1,0 +1,118 @@
+// The window-manager layout (components/desktopWm): the left column is a strip of icons and every chat
+// opens in a square window on the desktop beside it. Windows are placed by pointer coordinates (a
+// `translate` of JS), so what is positioned here is physical on purpose.
+
+// * the strip of icons stays as it is: dragging its edge would widen it
+body.desktop-wm-enabled .sidebar-resize-handle-left {
+  display: none;
+}
+
+.dwm-layer {
+  display: none;
+}
+
+body.desktop-wm .dwm-layer {
+  display: block;
+  position: absolute;
+  inset: 0;
+  // the desktop starts where the strip of icons ends
+  margin-inline-start: calc(var(--folders-sidebar-offset) + var(--left-column-width) + var(--page-chats-padding) * 2);
+  overflow: hidden;
+  // only the windows take the pointer, the rest is the desktop under them
+  pointer-events: none;
+}
+
+.dwm-window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  overflow: hidden;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-color);
+  // square, as the windows of a floating window manager
+  border-radius: 0;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, .2);
+  will-change: transform;
+
+  &.is-focused {
+    border-color: var(--primary-color);
+  }
+
+  &.is-interacting {
+    user-select: none;
+
+    // the chat in it must not take the pointer while the window is moved or resized
+    .dwm-window__body {
+      pointer-events: none;
+    }
+  }
+}
+
+.dwm-window__bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  // the same as BAR_HEIGHT in chatWindows.ts
+  height: 2rem;
+  padding-inline: .75rem .25rem;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  background-color: var(--surface-color);
+  border-bottom: 1px solid var(--border-color);
+
+  .dwm-window.is-interacting & {
+    cursor: grabbing;
+  }
+}
+
+.dwm-window__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: .875rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dwm-window__close {
+  flex: 0 0 auto;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.dwm-window__body {
+  --page-chats-padding: 8px;
+
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+
+  // the chat was made to fill the middle column: it fills the window instead
+  > .chat {
+    position: absolute;
+    inset: 0;
+    height: 100%;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.dwm-window__resizer {
+  position: absolute;
+  // the resize is measured on the screen (a drag to the right widens), so the handle sits in the physical corner
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  width: 1rem;
+  height: 1rem;
+  cursor: nwse-resize;
+  touch-action: none;
+}
