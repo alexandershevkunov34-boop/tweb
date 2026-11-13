@@ -68,7 +68,8 @@
 }
 
 .avatar {
-  border-radius: 50%;
+  // * square, as the avatar of the site's about window
+  border-radius: 0;
   /* overflow: hidden; */
 
   &-icon {

@@ -1,28 +1,180 @@
-// The window-manager layout (components/desktopWm): the left column is a strip of icons and every chat
-// opens in a square window on the desktop beside it. Windows are placed by pointer coordinates (a
-// `translate` of JS), so what is positioned here is physical on purpose.
+/*
+ * The window-manager look (components/desktopWm), taken from the author's vxwm-style site: a grey
+ * desktop with fog, a bar on top, square windows with a 1px frame that turns black in focus.
+ * Windows are placed by pointer coordinates (a `translate` set from JS), so what is positioned
+ * here is physical on purpose.
+ *
+ * Written as plain CSS on purpose: the same file is loaded as it is by the static mock-up
+ * the look is checked in (no nesting, no mixins).
+ */
 
-// * the strip of icons stays as it is: dragging its edge would widen it
-body.desktop-wm-enabled .sidebar-resize-handle-left {
-  display: none;
+:root {
+  --vx-bar: #f4f5f7;
+  --vx-bar-fg: #2b2e33;
+  --vx-hover: #e6e9ed;
+  --vx-sel: #d3d8de;
+  --vx-dim: #a3a9b1;
+  --vx-win: #ffffff;
+  --vx-win-fg: #23262b;
+  --vx-win-bd: #9aa1a9;
+  --vx-focus-bd: #111111;
+  --vx-field: #f4f5f7;
+  --vx-line: #d6dae0;
+  --vx-muted: #6f767f;
+  --vx-bar-h: 26px;
+  --vx-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace;
+  --vx-arrow: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 24 24'><path d='M3.5 2.5 V19.5 L8 15.4 L11 22 L14 20.6 L11.1 14.2 H17 Z' fill='white' stroke='black' stroke-width='1.15' stroke-linejoin='miter'/></svg>") 4 3, default;
+  --vx-grab: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24'><path d='M4.8 11.6 Q4.8 10 6.3 10 Q6.8 10 7.2 10.3 V8.8 Q7.2 7.3 8.6 7.3 Q9.3 7.3 9.7 7.7 Q9.9 6.2 11.2 6.2 Q12 6.2 12.5 6.8 Q12.9 6 13.9 6 Q15.3 6 15.3 7.5 Q15.7 7.2 16.3 7.2 Q17.8 7.2 17.8 8.7 V14.6 Q17.8 18.6 14.2 20.2 H10.6 Q8.6 19.2 7.1 16.6 L5.3 13.6 Q4.8 12.8 4.8 11.6 Z' fill='white' stroke='black' stroke-width='1.05' stroke-linejoin='round'/></svg>") 15 15, grabbing;
+  --vx-hand: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24'><path d='M8.6 3.8 Q8.6 2 10.3 2 Q12 2 12 3.8 V9.2 Q12.3 8.5 13.3 8.5 Q14.8 8.5 14.8 9.9 Q15.2 9.1 16.2 9.1 Q17.7 9.1 17.7 10.5 Q18.1 9.9 19 9.9 Q20.4 9.9 20.4 11.3 V16 Q20.4 20 17 22 H11.8 Q9.8 20.8 7.8 17.8 L4 13.4 Q3.4 12 4.8 11.6 Q6 11.3 6.8 12.2 L8.6 14.2 Z' fill='white' stroke='black' stroke-width='1.05' stroke-linejoin='round'/></svg>") 12 3, pointer;
 }
 
+/* the desktop: only in the window-manager layout */
+
+.dwm-fog,
+.dwm-bar,
 .dwm-layer {
   display: none;
 }
+
+body.desktop-wm {
+  background-color: #dfe3e8;
+}
+
+.dwm-fog {
+  position: fixed;
+  left: 0;
+  top: var(--vx-bar-h);
+  width: 100vw;
+  height: calc(100vh - var(--vx-bar-h));
+  z-index: 0;
+  pointer-events: none;
+}
+
+body.desktop-wm .dwm-fog {
+  display: block;
+}
+
+/* the columns are laid over the fog: nothing of them is a desktop of its own */
+body.desktop-wm .page-chats {
+  height: calc(100% - var(--vx-bar-h));
+  min-height: 0;
+  margin-top: var(--vx-bar-h);
+  background: transparent;
+}
+
+body.desktop-wm #main-columns,
+body.desktop-wm #column-center {
+  background: transparent;
+}
+
+/* the empty chat under the windows has nothing to show: its tips are not the desktop's */
+body.desktop-wm .chats-container {
+  display: none;
+}
+
+/* the bar */
+
+body.desktop-wm .dwm-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--vx-bar-h);
+  display: flex;
+  align-items: stretch;
+  z-index: 10;
+  background: var(--vx-bar);
+  color: var(--vx-bar-fg);
+  font: 12px/var(--vx-bar-h) var(--vx-mono);
+  border-bottom: 1px solid var(--vx-win-bd);
+  user-select: none;
+}
+
+.dwm-tags {
+  display: flex;
+}
+
+.dwm-bar__button {
+  position: relative;
+  height: 100%;
+  padding: 0 9px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.dwm-bar__button:hover {
+  background: var(--vx-hover);
+}
+
+.dwm-tag.is-selected,
+.dwm-tag.is-selected:hover {
+  background: var(--vx-sel);
+  color: #000;
+}
+
+/* a small square marks a tag that has a window, filled when it is the one in focus */
+.dwm-tag::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 3px;
+  height: 3px;
+  border: 1px solid currentColor;
+  opacity: 0;
+}
+
+.dwm-tag.is-occupied::before {
+  opacity: 1;
+}
+
+.dwm-tag.is-selected::before {
+  background: currentColor;
+}
+
+.dwm-layout {
+  padding: 0 10px;
+  letter-spacing: 1px;
+}
+
+.dwm-bar__title {
+  flex: 1;
+  min-width: 0;
+  padding: 0 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dwm-bar__title.is-focused {
+  background: var(--vx-sel);
+  color: #000;
+}
+
+.dwm-status {
+  display: flex;
+  align-items: center;
+  padding: 0 10px 0 4px;
+  white-space: nowrap;
+}
+
+/* the windows */
 
 body.desktop-wm .dwm-layer {
   display: block;
   position: absolute;
   inset: 0;
-  // the desktop starts where the strip of icons ends
+  /* the desktop starts where the strip of icons ends */
   margin-inline-start: calc(var(--folders-sidebar-offset) + var(--left-column-width) + var(--page-chats-padding) * 2);
   overflow: hidden;
-  // only the windows take the pointer, the rest is the desktop under them
+  /* only the windows take the pointer, the rest is the desktop under them */
   pointer-events: none;
+  z-index: 1;
 }
 
-.dwm-window {
+.dwm-win {
   position: absolute;
   top: 0;
   left: 0;
@@ -30,89 +182,156 @@ body.desktop-wm .dwm-layer {
   flex-direction: column;
   pointer-events: auto;
   overflow: hidden;
-  background-color: var(--surface-color);
-  border: 1px solid var(--border-color);
-  // square, as the windows of a floating window manager
+  background: var(--vx-win);
+  color: var(--vx-win-fg);
+  border: 1px solid var(--vx-win-bd);
   border-radius: 0;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, .2);
-  will-change: transform;
-
-  &.is-focused {
-    border-color: var(--primary-color);
-  }
-
-  &.is-interacting {
-    user-select: none;
-
-    // the chat in it must not take the pointer while the window is moved or resized
-    .dwm-window__body {
-      pointer-events: none;
-    }
-  }
+  transition: border-color .3s ease;
 }
 
-.dwm-window__bar {
+.dwm-win.is-focused {
+  border-color: var(--vx-focus-bd);
+}
+
+.dwm-win.is-interacting {
+  user-select: none;
+}
+
+/* the chat in it must not take the pointer while the window is moved or resized */
+.dwm-win.is-interacting .dwm-body {
+  pointer-events: none;
+}
+
+.dwm-titlebar {
+  flex: 0 0 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 0 8px;
+  background: var(--vx-win);
+  color: var(--vx-muted);
+  border-bottom: 1px solid var(--vx-win-bd);
+  touch-action: none;
+  user-select: none;
+  transition: color .3s ease;
+}
+
+.dwm-win.is-focused .dwm-titlebar {
+  color: #000;
+}
+
+.dwm-ttl {
+  min-width: 0;
+  overflow: hidden;
+  font: 11px var(--vx-mono);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dwm-close {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  // the same as BAR_HEIGHT in chatWindows.ts
-  height: 2rem;
-  padding-inline: .75rem .25rem;
-  cursor: grab;
-  user-select: none;
-  touch-action: none;
-  background-color: var(--surface-color);
-  border-bottom: 1px solid var(--border-color);
-
-  .dwm-window.is-interacting & {
-    cursor: grabbing;
-  }
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 0 3px 0 6px;
+  padding: 0;
+  border: 1px solid var(--vx-win-bd);
+  background: var(--vx-win);
+  color: var(--vx-muted);
+  transition: background .15s ease, color .15s ease, border-color .3s ease;
 }
 
-.dwm-window__title {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  font-size: .875rem;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.dwm-win.is-focused .dwm-close {
+  color: #000;
+  border-color: #000;
 }
 
-.dwm-window__close {
-  flex: 0 0 auto;
-  width: 1.75rem;
-  height: 1.75rem;
-  margin: 0;
-  font-size: 1.25rem;
+.dwm-close:hover,
+.dwm-win.is-focused .dwm-close:hover {
+  background: #111;
+  color: #fff;
+  border-color: #111;
 }
 
-.dwm-window__body {
+.dwm-body {
   --page-chats-padding: 8px;
 
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-
-  // the chat was made to fill the middle column: it fills the window instead
-  > .chat {
-    position: absolute;
-    inset: 0;
-    height: 100%;
-    opacity: 1;
-    transform: none;
-  }
 }
 
-.dwm-window__resizer {
+/* the chat was made to fill the middle column: it fills the window instead */
+.dwm-body > .chat {
   position: absolute;
-  // the resize is measured on the screen (a drag to the right widens), so the handle sits in the physical corner
+  inset: 0;
+  height: 100%;
+  opacity: 1;
+  transform: none;
+}
+
+.dwm-grip {
+  position: absolute;
   right: 0;
   bottom: 0;
-  z-index: 1;
-  width: 1rem;
-  height: 1rem;
+  z-index: 2;
+  width: 12px;
+  height: 12px;
   cursor: nwse-resize;
   touch-action: none;
+}
+
+.dwm-win.is-maxed .dwm-grip {
+  display: none;
+}
+
+/* the strip of icons: a window of the same kind, without the shadow and the rounding */
+
+body.desktop-wm #column-left {
+  border: 1px solid var(--vx-win-bd);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* the cursors of the site: an arrow, a hand over what can be pressed, a fist while a window is moved */
+
+body.desktop-wm,
+body.desktop-wm .dwm-win,
+body.desktop-wm #column-left {
+  cursor: var(--vx-arrow);
+}
+
+body.desktop-wm a,
+body.desktop-wm button,
+body.desktop-wm [role="button"],
+body.desktop-wm .btn-icon,
+body.desktop-wm .btn-menu-item,
+body.desktop-wm .chatlist-chat,
+body.desktop-wm .dwm-close {
+  cursor: var(--vx-hand) !important;
+}
+
+/* a text field keeps its caret */
+body.desktop-wm [contenteditable],
+body.desktop-wm input,
+body.desktop-wm textarea {
+  cursor: text;
+}
+
+body.dwm-dragging,
+body.dwm-dragging * {
+  cursor: var(--vx-grab) !important;
+  user-select: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dwm-win,
+  .dwm-titlebar,
+  .dwm-close {
+    transition: none;
+  }
 }

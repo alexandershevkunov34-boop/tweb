@@ -124,21 +124,23 @@ const colorMap: {
   }
 } = {
   day: {
-    'primary-color': '#3390ec',
-    'message-out-primary-color': '#5CA853',
+    // * the grey palette of the vxwm look (scss/partials/_desktopWm.scss): black accents on white
+    'primary-color': '#111111',
+    'message-out-primary-color': '#111111',
+    'message-out-background-color': '#d3d8de',
     'message-background-color': '#ffffff',
     'surface-color': '#ffffff',
     'danger-color': '#df3f40',
-    'primary-text-color': '#000000',
-    'secondary-text-color': '#707579',
-    'saved-color': '#359AD4',
+    'primary-text-color': '#23262b',
+    'secondary-text-color': '#6f767f',
+    'saved-color': '#6f767f',
     'green-color': '#70b768',
     // SCSS-side defaults migrated from base.scss :root
-    'background-color': '#f4f4f5',
-    'body-background-color': '#ffffff',
-    'border-color': '#dfe1e5',
-    'secondary-color': '#c4c9cc',
-    'input-search-background-color': '#ffffff',
+    'background-color': '#f4f5f7',
+    'body-background-color': '#dfe3e8',
+    'border-color': '#d6dae0',
+    'secondary-color': '#a3a9b1',
+    'input-search-background-color': '#f4f5f7',
     ...PAID_REACTION_OUTSIDE_DAY_COLORS
   },
   night: {

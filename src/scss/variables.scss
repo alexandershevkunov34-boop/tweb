@@ -1,7 +1,8 @@
 $placeholder-color: var(--input-label-color, #9e9e9e);
-$border-radius: 12px;
-$border-radius-medium: 16px;
-$border-radius-big: 24px;
+// * square, as everything of the vxwm look (desktopWm): the radii that the sheets take from these three are none
+$border-radius: 0;
+$border-radius-medium: 0;
+$border-radius-big: 0;
 
 $hover-alpha: .08;
 
