@@ -3,6 +3,45 @@ export type DashedCircleSection = {
   length: number,
   lineWidth: number
 };
+/**
+ * Strokes the part of a square's outline between two shares of its length, clockwise from the middle
+ * of the top side. The ring of a story is a square, as every avatar of the vxwm look is.
+ */
+function strokeSquarePart(context: CanvasRenderingContext2D, centerX: number, centerY: number, half: number, from: number, to: number) {
+  const corners: [number, number][] = [
+    [centerX, centerY - half],
+    [centerX + half, centerY - half],
+    [centerX + half, centerY + half],
+    [centerX - half, centerY + half],
+    [centerX - half, centerY - half],
+    [centerX, centerY - half]
+  ];
+  // * the sides, in shares of the whole outline: half of the top one, three whole ones, half of the top one again
+  const total = half * 8;
+  let passed = 0;
+  let started = false;
+  for(let i = 0; i < corners.length - 1; ++i) {
+    const [x1, y1] = corners[i];
+    const [x2, y2] = corners[i + 1];
+    const length = Math.hypot(x2 - x1, y2 - y1);
+    const start = passed / total;
+    const end = (passed + length) / total;
+    passed += length;
+    if(end <= from || start >= to) {
+      continue;
+    }
+
+    const a = (Math.max(from, start) - start) / (end - start);
+    const b = (Math.min(to, end) - start) / (end - start);
+    if(!started) {
+      context.moveTo(x1 + (x2 - x1) * a, y1 + (y2 - y1) * a);
+      started = true;
+    }
+
+    context.lineTo(x1 + (x2 - x1) * b, y1 + (y2 - y1) * b);
+  }
+}
+
 export default class DashedCircle {
   public canvas: HTMLCanvasElement;
   public context: CanvasRenderingContext2D;
@@ -15,7 +54,6 @@ export default class DashedCircle {
   private radius: number;
   private gapLength: number;
   private totalLength: number;
-  private startAngle: number;
 
   constructor() {
     this.canvas = document.createElement('canvas');
@@ -36,9 +74,8 @@ export default class DashedCircle {
     this.centerY = this.height / 2;
     this.radius = options.radius * this.dpr - 0.5;
     this.gapLength = options.gap * this.dpr;
-    this.totalLength = Math.PI * this.radius * 2;
-    // this.startAngle = -1.5 + this.gapLength * 0 / this.totalLength;
-    this.startAngle = -1.5;
+    // * the length of the outline of the square around the avatar
+    this.totalLength = this.radius * 8;
   }
 
   public render(sections: DashedCircleSection[]) {
@@ -46,7 +83,7 @@ export default class DashedCircle {
 
     const totalSegments = sections.reduce((acc, section) => acc + section.length, 0);
     const totalSections = sections.length;
-    this.context.lineCap = 'round';
+    this.context.lineCap = 'butt';
     if(sections.length === 1 && sections[0].length === 1) {
       this.context.setLineDash([]);
     } else {
@@ -57,18 +94,9 @@ export default class DashedCircle {
     for(let i = 0; i < totalSections; ++i) {
       const section = sections[i];
       const part = section.length / totalSegments;
-      const sectionStartAngle = this.startAngle + partSum * 2 * Math.PI;
-      const sectionEndAngle = sectionStartAngle + part * 2 * Math.PI;
 
       this.context.beginPath();
-      this.context.arc(
-        this.centerX,
-        this.centerY,
-        this.radius,
-        sectionStartAngle,
-        sectionEndAngle,
-        false
-      );
+      strokeSquarePart(this.context, this.centerX, this.centerY, this.radius, partSum, partSum + part);
       this.context.strokeStyle = section.color;
       this.context.lineWidth = section.lineWidth * this.dpr;
       this.context.stroke();

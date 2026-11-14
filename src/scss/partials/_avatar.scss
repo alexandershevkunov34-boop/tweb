@@ -167,7 +167,7 @@
       position: absolute;
       content: " ";
       display: block;
-      border-radius: 50%;
+      border-radius: 0;
       border: 2px solid var(--surface-color);
       background-color: var(--avatar-online-color);
       width: 14px;
@@ -202,7 +202,7 @@
     right: var(--offset);
     bottom: var(--offset);
     left: var(--offset);
-    border-radius: 50%;
+    border-radius: 0;
     background: var(--avatar-color-story-read);
 
     &.is-unread {

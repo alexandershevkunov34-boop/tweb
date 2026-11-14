@@ -5,6 +5,7 @@ import wrapPeerTitle from '@components/wrappers/peerTitle';
 import Fog from '@components/desktopWm/fog';
 import {isDesktopWmEnabled} from '@config/desktopWm';
 import I18n from '@lib/langPack';
+import liteMode from '@helpers/liteMode';
 import mediaSizes from '@helpers/mediaSizes';
 import clamp from '@helpers/number/clamp';
 
@@ -23,6 +24,7 @@ type ChatWindow = {
   // * where the window stood before the tiles took it, and before it was maximized
   floatGeometry?: WindowGeometry,
   maximizedFrom?: WindowGeometry,
+  animationTimeout?: number,
   onPeerChanged: (chat: Chat) => void
 };
 
@@ -31,36 +33,43 @@ type Layout = 'float' | 'tile';
 
 const STORAGE_KEY = 'desktop-wm-geometry';
 // * a new window is a square
-const DEFAULT_SIZE = 440;
-const MIN_WIDTH = 300;
-const MIN_HEIGHT = 320;
+const DEFAULT_SIZE = 560;
+const MIN_WIDTH = 340;
+const MIN_HEIGHT = 380;
 // * how far the next new window is moved from the previous one
 const CASCADE_STEP = 32;
 const CASCADE_STEPS = 8;
-// * how much of a window's width has to stay on the desktop, and how much of its bar
-const KEEP_VISIBLE = 64;
-const TITLEBAR_HEIGHT = 24;
+// * how much of a remembered window has to be in sight for it to open where it was left
+const KEEP_VISIBLE = 96;
 // * the gap between the tiles and the edge of the desktop, as in vxwm
 const TILE_GAP = 8;
 // * the share of the desktop the first tile takes when there are others beside it
 const TILE_MASTER_SHARE = 0.55;
+// * how long a window takes to go to its new place and size (the same as the transition in the sheet)
+const MOVE_DURATION = 280;
+// * how long the desktop takes to fly to a window
+const FLIGHT_DURATION = 480;
 
 const CLOSE_ICON = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="square"><path d="M1 1l8 8M9 1L1 9"/></svg>';
 
 const pad = (value: number) => ('' + value).padStart(2, '0');
+const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
 /**
- * The desktop: chats open in square windows, as on the author's vxwm-style site. A window is moved
- * by its title (or by any point of it with Alt held), resized by the corner (or with Alt and the
- * right button) and closed by the cross. The bar on top lists the windows as tags, the `><>` /
- * `[]=` button lays them out floating or in tiles, and Alt+Space, Alt+M, Alt+Shift+C and Alt+1…9
- * do the same from the keyboard. The window in focus holds the chat which `appImManager.chat`
- * is - the rest of the app reads that one.
+ * The desktop: chats open in square windows, as on the author's vxwm-style site. The windows lie in
+ * a space larger than the screen, which is moved by dragging the empty desktop (or with the wheel).
+ * A window is moved by its title (or by any point of it with Alt held), resized by the corner (or
+ * with Alt and the right button) and closed by the cross. The bar on top lists the windows as
+ * tags, which fly the desktop to their window, the `><>` / `[]=` button lays them out floating or
+ * in tiles, and Alt+Space, Alt+M, Alt+Shift+C and Alt+1…9 do the same from the keyboard. The window
+ * in focus holds the chat which `appImManager.chat` is - the rest of the app reads that one.
  *
- * Coordinates are physical (`left` / `top` measured from the layer), as they come from the pointer.
+ * Coordinates are physical (`left` / `top` measured from the layer), as they come from the pointer;
+ * a window's are the ones in the space, which are the screen's less the shift of the desktop.
  */
 export default class ChatWindows {
   private layer: HTMLElement;
+  private world: HTMLElement;
   private bar: HTMLElement;
   private tagsEl: HTMLElement;
   private layoutBtn: HTMLButtonElement;
@@ -72,11 +81,17 @@ export default class ChatWindows {
   private layout: Layout = 'float';
   private zIndex = 0;
   private cascade = 0;
+  private panX = 0;
+  private panY = 0;
+  private flightFrame = 0;
   private savedGeometry: {[peerId: string]: WindowGeometry};
 
   constructor(private appImManager: AppImManager) {
     this.layer = document.createElement('div');
     this.layer.classList.add('dwm-layer');
+    this.world = document.createElement('div');
+    this.world.classList.add('dwm-world');
+    this.layer.append(this.world);
     // * right after the middle column, so the right one (when it floats) stays over the windows
     appImManager.columnEl.after(this.layer);
 
@@ -98,6 +113,8 @@ export default class ChatWindows {
     mediaSizes.addEventListener('changeScreen', () => this.updateActive());
     window.addEventListener('resize', this.onResize);
     document.addEventListener('keydown', this.onKeyDown, true);
+    this.layer.addEventListener('pointerdown', this.onLayerPointerDown);
+    this.layer.addEventListener('wheel', this.onLayerWheel, {passive: false});
     // * Alt with the right button resizes, it must not open a menu
     this.layer.addEventListener('contextmenu', (e) => e.altKey && e.preventDefault());
   }
@@ -154,9 +171,16 @@ export default class ChatWindows {
 
     const status = document.createElement('div');
     status.classList.add('dwm-status');
+
+    const resetBtn = document.createElement('button');
+    resetBtn.classList.add('dwm-bar__button');
+    resetBtn.textContent = '[reset]';
+    resetBtn.title = 'Alt+0';
+    resetBtn.addEventListener('click', () => this.flyTo(0, 0));
+
     this.clockEl = document.createElement('span');
     this.clockEl.classList.add('dwm-clock');
-    status.append(this.clockEl);
+    status.append(resetBtn, this.clockEl);
 
     bar.append(this.tagsEl, this.layoutBtn, this.barTitle, status);
     document.body.append(bar);
@@ -181,7 +205,7 @@ export default class ChatWindows {
       tag.classList.toggle('is-selected', win === focused);
       tag.textContent = '' + (index + 1);
       tag.title = win.titleEl.textContent;
-      tag.addEventListener('click', () => this.focus(win));
+      tag.addEventListener('click', () => this.goToWindow(win));
       return tag;
     }));
 
@@ -197,7 +221,7 @@ export default class ChatWindows {
 
     const existing = this.windows.find((win) => appImManager.isSamePeer(win.chat, options));
     if(existing) {
-      this.focus(existing);
+      this.goToWindow(existing);
       await existing.chat.setPeer(options as any as Parameters<Chat['setPeer']>[0]);
       return true;
     }
@@ -205,12 +229,13 @@ export default class ChatWindows {
     const chat = appImManager.createWindowChat();
     const win = this.createWindow(chat, options);
     this.windows.push(win);
-    this.layer.append(win.element);
+    this.world.append(win.element);
     // * the window is laid out before the chat starts to render in it
     this.applyGeometry(win);
     chat.container.classList.add('active');
     this.focus(win);
     this.layout === 'tile' && this.tile();
+    this.animateOpening(win);
 
     try {
       await chat.setPeer(options as any as Parameters<Chat['setPeer']>[0]);
@@ -230,6 +255,7 @@ export default class ChatWindows {
 
     this.windows.splice(index, 1);
     this.appImManager.removeEventListener('peer_changed', win.onPeerChanged);
+    clearTimeout(win.animationTimeout);
     win.element.remove();
     this.appImManager.destroyWindowChat(win.chat);
     this.layout === 'tile' && this.tile();
@@ -254,6 +280,7 @@ export default class ChatWindows {
   public reset() {
     this.windows.forEach((win) => {
       this.appImManager.removeEventListener('peer_changed', win.onPeerChanged);
+      clearTimeout(win.animationTimeout);
       win.element.remove();
     });
     this.windows.length = 0;
@@ -276,6 +303,14 @@ export default class ChatWindows {
     this.updateFocusedClass();
     // * the first tile is the one in focus
     this.layout === 'tile' && this.tile();
+  }
+
+  /** The window comes into focus and the desktop flies to it, where it lies out of sight. */
+  private goToWindow(win: ChatWindow) {
+    this.focus(win);
+    if(this.layout === 'float') {
+      this.flyToWindow(win);
+    }
   }
 
   private createWindow(chat: Chat, options: ChatSetInnerPeerOptions): ChatWindow {
@@ -362,31 +397,129 @@ export default class ChatWindows {
     });
   }
 
+  // * the view: where the screen is in the space
+
+  /** The part of the space on the screen. */
+  private getView(): WindowGeometry {
+    const {width, height} = this.layer.getBoundingClientRect();
+    return {x: -this.panX, y: -this.panY, width, height};
+  }
+
+  private setPan(x: number, y: number) {
+    this.panX = x;
+    this.panY = y;
+    this.world.style.transform = `translate(${x}px, ${y}px)`;
+  }
+
+  private cancelFlight() {
+    cancelAnimationFrame(this.flightFrame);
+    this.flightFrame = 0;
+  }
+
+  /** Moves the desktop smoothly, so that the point `x`, `y` of the space is at the centre of the screen. */
+  private flyTo(x: number, y: number) {
+    this.cancelFlight();
+    const {width, height} = this.layer.getBoundingClientRect();
+    const endX = width / 2 - x;
+    const endY = height / 2 - y;
+    const startX = this.panX;
+    const startY = this.panY;
+    if(!liteMode.isAvailable('animations')) {
+      this.setPan(endX, endY);
+      return;
+    }
+
+    const startTime = performance.now();
+    const step = (now: number) => {
+      const progress = Math.min(1, (now - startTime) / FLIGHT_DURATION);
+      const k = easeOutCubic(progress);
+      this.setPan(startX + (endX - startX) * k, startY + (endY - startY) * k);
+      this.flightFrame = progress < 1 ? requestAnimationFrame(step) : 0;
+    };
+
+    this.flightFrame = requestAnimationFrame(step);
+  }
+
+  private flyToWindow(win: ChatWindow) {
+    const {x, y, width, height} = win.geometry;
+    this.flyTo(x + width / 2, y + height / 2);
+  }
+
+  private onLayerPointerDown = (e: PointerEvent) => {
+    // * only the empty desktop is dragged, a window has its own ways to be moved
+    if(e.target !== this.layer && e.target !== this.world || (e.button !== 0 && e.button !== 1)) {
+      return;
+    }
+
+    e.preventDefault();
+    this.cancelFlight();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const {panX, panY} = this;
+    document.body.classList.add('dwm-dragging');
+
+    const onMove = (ev: PointerEvent) => {
+      this.setPan(panX + ev.clientX - startX, panY + ev.clientY - startY);
+    };
+
+    const onEnd = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onEnd);
+      document.removeEventListener('pointercancel', onEnd);
+      document.body.classList.remove('dwm-dragging');
+    };
+
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onEnd);
+    document.addEventListener('pointercancel', onEnd);
+  };
+
+  private onLayerWheel = (e: WheelEvent) => {
+    if(e.target !== this.layer && e.target !== this.world) {
+      return;
+    }
+
+    e.preventDefault();
+    this.cancelFlight();
+    this.setPan(this.panX - e.deltaX, this.panY - e.deltaY);
+  };
+
   // * geometry
 
   private getInitialGeometry(options: Pick<ChatSetInnerPeerOptions, 'peerId'>): WindowGeometry {
-    const rect = this.layer.getBoundingClientRect();
+    const view = this.getView();
     const saved = this.savedGeometry[options.peerId];
+    const size = saved ?
+      this.clampSize(saved, view) :
+      {width: Math.min(DEFAULT_SIZE, view.width), height: Math.min(DEFAULT_SIZE, view.height)};
+
     const offset = (this.cascade++ % CASCADE_STEPS) * CASCADE_STEP - CASCADE_STEP * CASCADE_STEPS / 2;
-    const geometry = saved ? {...saved} : {
-      x: (rect.width - DEFAULT_SIZE) / 2 + offset,
-      y: Math.max(0, (rect.height - DEFAULT_SIZE) / 2) + offset,
-      width: DEFAULT_SIZE,
-      height: DEFAULT_SIZE
+    const centered = {
+      ...size,
+      x: view.x + (view.width - size.width) / 2 + offset,
+      y: view.y + Math.max(0, (view.height - size.height) / 2) + offset
     };
 
-    return this.clampGeometry(geometry, rect);
+    // * a window opens where it was left, if that is in sight, and in the middle of the screen if not
+    if(saved && this.isInSight(saved, view)) {
+      return {...size, x: saved.x, y: saved.y};
+    }
+
+    return centered;
   }
 
-  private clampGeometry(geometry: WindowGeometry, rect: DOMRect): WindowGeometry {
-    const width = clamp(geometry.width, MIN_WIDTH, Math.max(MIN_WIDTH, rect.width));
-    const height = clamp(geometry.height, MIN_HEIGHT, Math.max(MIN_HEIGHT, rect.height));
+  private isInSight(geometry: WindowGeometry, view: WindowGeometry) {
+    return geometry.x + geometry.width > view.x + KEEP_VISIBLE &&
+      geometry.x < view.x + view.width - KEEP_VISIBLE &&
+      geometry.y + KEEP_VISIBLE / 2 > view.y &&
+      geometry.y < view.y + view.height - KEEP_VISIBLE / 2;
+  }
+
+  private clampSize<T extends {width: number, height: number}>(geometry: T, view: WindowGeometry) {
     return {
-      width,
-      height,
-      // * some of the window has to stay in sight, and its title always, or it could not be got back
-      x: clamp(geometry.x, KEEP_VISIBLE - width, rect.width - KEEP_VISIBLE),
-      y: clamp(geometry.y, 0, Math.max(0, rect.height - TITLEBAR_HEIGHT))
+      ...geometry,
+      width: clamp(geometry.width, MIN_WIDTH, Math.max(MIN_WIDTH, view.width)),
+      height: clamp(geometry.height, MIN_HEIGHT, Math.max(MIN_HEIGHT, view.height))
     };
   }
 
@@ -395,12 +528,35 @@ export default class ChatWindows {
     const {style} = win.element;
     style.width = width + 'px';
     style.height = height + 'px';
-    style.transform = `translate(${x}px, ${y}px)`;
+    style.translate = `${x}px ${y}px`;
   }
 
-  private place(win: ChatWindow, geometry: WindowGeometry) {
+  private place(win: ChatWindow, geometry: WindowGeometry, animate = false) {
+    animate && this.animateMove(win);
     win.geometry = geometry;
     this.applyGeometry(win);
+  }
+
+  // * animations: the transitions of the sheet run while the class is on, and it is on only as long as they do
+
+  private animateMove(win: ChatWindow) {
+    if(!liteMode.isAvailable('animations')) {
+      return;
+    }
+
+    win.element.classList.add('is-anim');
+    clearTimeout(win.animationTimeout);
+    win.animationTimeout = window.setTimeout(() => win.element.classList.remove('is-anim'), MOVE_DURATION + 40);
+  }
+
+  private animateOpening(win: ChatWindow) {
+    if(!liteMode.isAvailable('animations')) {
+      return;
+    }
+
+    const {element} = win;
+    element.classList.add('is-opening');
+    element.addEventListener('animationend', () => element.classList.remove('is-opening'), {once: true});
   }
 
   // * layouts
@@ -418,7 +574,7 @@ export default class ChatWindows {
     } else {
       this.windows.forEach((win) => {
         if(win.floatGeometry) {
-          this.place(win, win.floatGeometry);
+          this.place(win, win.floatGeometry, true);
           win.floatGeometry = undefined;
         }
       });
@@ -427,7 +583,7 @@ export default class ChatWindows {
     this.updateBar();
   }
 
-  /** The window in focus takes the left part of the desktop, the others share the right one. */
+  /** The window in focus takes the left part of the screen, the others share the right one. */
   private tile() {
     if(!this.windows.length) {
       return;
@@ -435,26 +591,31 @@ export default class ChatWindows {
 
     const focused = this.getFocused();
     const wins = [...this.windows].sort((a, b) => a === focused ? -1 : b === focused ? 1 : 0);
-    const rect = this.layer.getBoundingClientRect();
-    const x = TILE_GAP;
-    const y = TILE_GAP;
-    const width = rect.width - TILE_GAP * 2;
-    const height = rect.height - TILE_GAP * 2;
+    const view = this.getView();
+    const x = view.x + TILE_GAP;
+    const y = view.y + TILE_GAP;
+    const width = view.width - TILE_GAP * 2;
+    const height = view.height - TILE_GAP * 2;
     wins.forEach((win) => this.unmaximize(win, false));
 
     if(wins.length === 1) {
-      this.place(wins[0], {x, y, width, height});
+      this.place(wins[0], {x, y, width, height}, true);
       return;
     }
 
     const masterWidth = width * TILE_MASTER_SHARE - TILE_GAP / 2;
     const stackWidth = width - masterWidth - TILE_GAP;
-    this.place(wins[0], {x, y, width: masterWidth, height});
+    this.place(wins[0], {x, y, width: masterWidth, height}, true);
 
     const rest = wins.slice(1);
     const stackHeight = (height - TILE_GAP * (rest.length - 1)) / rest.length;
     rest.forEach((win, index) => {
-      this.place(win, {x: x + masterWidth + TILE_GAP, y: y + index * (stackHeight + TILE_GAP), width: stackWidth, height: stackHeight});
+      this.place(win, {
+        x: x + masterWidth + TILE_GAP,
+        y: y + index * (stackHeight + TILE_GAP),
+        width: stackWidth,
+        height: stackHeight
+      }, true);
     });
   }
 
@@ -464,10 +625,9 @@ export default class ChatWindows {
       return;
     }
 
-    const rect = this.layer.getBoundingClientRect();
     win.maximizedFrom = {...win.geometry};
     win.element.classList.add('is-maxed');
-    this.place(win, {x: 0, y: 0, width: rect.width, height: rect.height});
+    this.place(win, this.getView(), true);
   }
 
   private unmaximize(win: ChatWindow, restore: boolean) {
@@ -478,7 +638,7 @@ export default class ChatWindows {
     const from = win.maximizedFrom;
     win.maximizedFrom = undefined;
     win.element.classList.remove('is-maxed');
-    restore && this.place(win, from);
+    restore && this.place(win, from, true);
   }
 
   // * pointer and keyboard
@@ -500,8 +660,10 @@ export default class ChatWindows {
       this.updateBar();
     }
 
-    // * the layer's box is read once, not by every move
-    const rect = this.layer.getBoundingClientRect();
+    // * a window follows the pointer at once, and not a moment after it
+    clearTimeout(win.animationTimeout);
+    win.element.classList.remove('is-anim');
+    const view = this.getView();
     const start = {...win.geometry};
     const startX = e.clientX;
     const startY = e.clientY;
@@ -520,7 +682,7 @@ export default class ChatWindows {
         next.height += dy;
       }
 
-      this.place(win, this.clampGeometry(next, rect));
+      this.place(win, this.clampSize(next, view));
     };
 
     const onEnd = () => {
@@ -543,15 +705,17 @@ export default class ChatWindows {
     }
 
     const focused = this.getFocused();
-    const digit = /^Digit([1-9])$/.exec(e.code);
+    const digit = /^Digit([0-9])$/.exec(e.code);
     if(e.code === 'Space') {
       this.setLayout(this.layout === 'tile' ? 'float' : 'tile');
     } else if(e.code === 'KeyM' && !e.shiftKey && focused) {
       this.layout === 'float' && this.toggleMaximized(focused);
     } else if(e.code === 'KeyC' && e.shiftKey && focused) {
       this.close(focused);
+    } else if(digit && !e.shiftKey && +digit[1] === 0) {
+      this.flyTo(0, 0);
     } else if(digit && !e.shiftKey && this.windows[+digit[1] - 1]) {
-      this.focus(this.windows[+digit[1] - 1]);
+      this.goToWindow(this.windows[+digit[1] - 1]);
     } else {
       return;
     }
@@ -578,12 +742,10 @@ export default class ChatWindows {
       return;
     }
 
-    const rect = this.layer.getBoundingClientRect();
+    const view = this.getView();
     this.windows.forEach((win) => {
       if(win.maximizedFrom) {
-        this.place(win, {x: 0, y: 0, width: rect.width, height: rect.height});
-      } else {
-        this.place(win, this.clampGeometry(win.geometry, rect));
+        this.place(win, view);
       }
     });
   };
